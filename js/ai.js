@@ -18,7 +18,22 @@ export function optimizePath(waypoints) {
 
     // Simple Greedy TSP (Nearest Neighbor) using the first point as start
     let unvisited = [...waypoints];
-    let path = [unvisited.shift()]; // Start with the first point (e.g., Rover location or Home)
+    const startPoint = unvisited.shift(); // Always start at 0
+    let path = [startPoint];
+
+    // Check if it's a loop (Last point == First point)
+    const lastPoint = waypoints[waypoints.length - 1];
+    const isLoop = (waypoints.length > 2 && getDistance(startPoint, lastPoint) < 0.005); // < 5 meters
+
+    let endPoint = null;
+
+    if (isLoop) {
+        // Remove the duplicate end point from 'unvisited' so we don't visit it immediately
+        // The nearest neighbor to Start(0,0) is usually End(0,0), which breaks the loop visually
+        unvisited.pop();
+        endPoint = lastPoint;
+    }
+
     let totalOriginalDist = 0;
     let totalNewDist = 0;
 
@@ -44,6 +59,12 @@ export function optimizePath(waypoints) {
         totalNewDist += minDist;
         path.push(unvisited[nearestIdx]);
         unvisited.splice(nearestIdx, 1);
+    }
+
+    // If it was a loop, close it at the end
+    if (isLoop && endPoint) {
+        totalNewDist += getDistance(path[path.length - 1], endPoint);
+        path.push(endPoint);
     }
 
     const savedKm = Math.max(0, totalOriginalDist - totalNewDist);

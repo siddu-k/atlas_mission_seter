@@ -60,27 +60,21 @@ function addWaypoint(latlng, callback) {
     updatePolyline();
     if (callback) callback(getWaypoints());
 
-    // Loop Closure & Drag Events
+    // Loop Closure & Connection Events
     marker.on('click', () => {
-        // If this is the START marker (index 0) and we have points
-        if (markers.length > 2 && markers[0].marker === marker) {
-            // Close the loop
-            const startPos = marker.getLatLng();
-            // Add a logical point at the start position to close the loop data-wise
-            // But don't add another visual marker on top of the first one
+        const lastMarker = markers[markers.length - 1];
 
-            // Actually, for a pure loop, we just need to ensure the path connects back.
-            // Let's add the point to the data but not the map marker? 
-            // Or just draw the line back.
+        // Prevent connecting to the immediate last point (clicking itself)
+        // ensure we have at least 2 points to make a line
+        if (markers.length > 1 && lastMarker.marker !== marker) {
 
-            // Simplest way: Add a new waypoint exactly at start
-            // But let's check if it's already closed
-            const last = markers[markers.length - 1];
-            if (last.lat !== startPos.lat || last.lng !== startPos.lng) {
-                addWaypoint(startPos, callback);
-                // Alert user
-                // Use a toast or console, alert is annoying.
-                console.log("Loop Closed");
+            const targetPos = marker.getLatLng();
+
+            // Check if we are already connected to this point (prevent double clicks/duplicates at end)
+            // (The lastMarker check above mostly handles this, but coordinate check is safer)
+            if (lastMarker.lat !== targetPos.lat || lastMarker.lng !== targetPos.lng) {
+                console.log("Connecting loop to waypoint");
+                addWaypoint(targetPos, callback);
             }
         }
     });
@@ -109,12 +103,37 @@ function updatePolyline() {
         opacity: 0.8,
         dashArray: '10, 10' // Dashed line for "planned" path
     }).addTo(map);
+
+    // Add Directional Arrows
+    if (window.arrowLayer) {
+        map.removeLayer(window.arrowLayer);
+    }
+
+    if (latlngs.length > 1) {
+        window.arrowLayer = L.polylineDecorator(pathPolyline, {
+            patterns: [
+                {
+                    offset: '10%',
+                    repeat: '20%',
+                    symbol: L.Symbol.arrowHead({
+                        pixelSize: 15,
+                        polygon: true,
+                        pathOptions: { stroke: true, color: '#3b82f6', fillOpacity: 1 }
+                    })
+                }
+            ]
+        }).addTo(map);
+    }
 }
 
 export function clearMap() {
     markers.forEach(m => map.removeLayer(m.marker));
     markers = [];
     if (pathPolyline) map.removeLayer(pathPolyline);
+    if (window.arrowLayer) {
+        map.removeLayer(window.arrowLayer);
+        window.arrowLayer = null;
+    }
     pathPolyline = null;
 }
 
@@ -140,6 +159,27 @@ export function updatePath(newWaypoints) {
         weight: 5,
         opacity: 1
     }).addTo(map);
+
+    // Add Directional Arrows for Optimized Path
+    if (window.arrowLayer) {
+        map.removeLayer(window.arrowLayer);
+    }
+
+    if (latlngs.length > 1) {
+        window.arrowLayer = L.polylineDecorator(pathPolyline, {
+            patterns: [
+                {
+                    offset: '25',
+                    repeat: '50',
+                    symbol: L.Symbol.arrowHead({
+                        pixelSize: 15,
+                        polygon: true,
+                        pathOptions: { stroke: true, color: '#10b981', fillOpacity: 1 }
+                    })
+                }
+            ]
+        }).addTo(map);
+    }
 }
 
 export function updateRoverPosition(lat, lng, heading) {

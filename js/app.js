@@ -1,6 +1,6 @@
 // js/app.js
 import { initMap, enableDrawing, clearMap, getWaypoints, updatePath, updateRoverPosition, panTo, updateUserLocation } from './map.js';
-import { optimizePath, calculateStats } from './ai.js';
+import { calculateStats } from './ai.js';
 import { db } from './supabase-client.js';
 
 // Application State
@@ -43,62 +43,76 @@ function init() {
         }
 
         const btn = document.getElementById('btn-locate');
-        btn.innerHTML = '<i class="ph ph-spinner ph-spin"></i> Locating...';
+        btn.innerHTML = '<i class="ph ph-spinner ph-spin"></i> Initializing GPS...';
 
-        let attempts = 0;
-        const maxAttempts = 3;
+        // BURST MODE: Watch GPS for 5 seconds and pick best accuracy
+        let bestPosition = null;
+        let watchId = null;
+        const BURST_DURATION = 5000;
+        const TARGET_ACCURACY = 15; // Meters
 
-        const getGPSLocation = () => {
-            attempts++;
+        const handlePosition = (position) => {
+            const { latitude, longitude, accuracy } = position.coords;
+            console.log(`GPS Update: ${accuracy}m accuracy`);
 
-            navigator.geolocation.getCurrentPosition((position) => {
-                const { latitude, longitude, accuracy } = position.coords;
+            // Keep best position
+            if (!bestPosition || accuracy < bestPosition.coords.accuracy) {
+                bestPosition = position;
 
-                // Detailed logging
-                console.log(`=== GPS ATTEMPT ${attempts} ===`);
-                console.log("Latitude:", latitude);
-                console.log("Longitude:", longitude);
-                console.log("Accuracy:", accuracy, "meters");
-                console.log("Timestamp:", new Date(position.timestamp).toLocaleTimeString());
-
-                // REJECT if accuracy is worse than 500m (likely WiFi/IP, not GPS)
-                if (accuracy > 500 && attempts < maxAttempts) {
-                    console.warn(`⚠️ Accuracy too low (${Math.round(accuracy)}m) - Retrying for GPS lock...`);
-                    btn.innerHTML = `<i class="ph ph-spinner ph-spin"></i> GPS ${attempts}/${maxAttempts}...`;
-                    setTimeout(getGPSLocation, 1000); // Retry after 1 second
-                    return;
+                // Live update if decent
+                if (accuracy < 1000) {
+                    updateUserLocation(latitude, longitude, accuracy);
+                    // Only pan if it's our first lock or very accurate
+                    if (!bestPosition || accuracy < 50) {
+                        panTo(latitude, longitude);
+                    }
                 }
+            }
 
-                // Warn if still poor after max attempts
-                if (accuracy > 500) {
-                    console.warn("⚠️ Could not get GPS lock - using best available position");
-                    alert(`⚠️ GPS unavailable. Using WiFi/IP location (${Math.round(accuracy)}m accuracy).\n\nFor accurate GPS:\n• Use a mobile device with GPS\n• Enable location services\n• Go outdoors for better signal`);
-                }
+            // Feedback
+            if (accuracy <= TARGET_ACCURACY) {
+                btn.innerHTML = `<i class="ph ph-check"></i> Precise (${Math.round(accuracy)}m)`;
+                finishGPS();
+            } else {
+                btn.innerHTML = `<i class="ph ph-spinner ph-spin"></i> Refining (${Math.round(accuracy)}m)...`;
+            }
+        };
 
+        const handleError = (error) => {
+            console.warn("GPS Error:", error);
+        };
+
+        const finishGPS = () => {
+            if (watchId) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+
+            if (bestPosition) {
+                const { latitude, longitude, accuracy } = bestPosition.coords;
                 updateUserLocation(latitude, longitude, accuracy);
                 panTo(latitude, longitude);
 
                 btn.innerHTML = '<i class="ph ph-navigation-arrow"></i> Locate Me';
                 btn.classList.add('active');
                 setTimeout(() => btn.classList.remove('active'), 2000);
-
-            }, (error) => {
-                console.error("GPS Error:", error);
-                if (attempts < maxAttempts) {
-                    console.log(`Retrying... (${attempts}/${maxAttempts})`);
-                    setTimeout(getGPSLocation, 1000);
-                } else {
-                    alert("Could not get location. Ensure GPS is enabled.");
-                    btn.innerHTML = '<i class="ph ph-warning"></i> Error';
-                }
-            }, {
-                enableHighAccuracy: true,
-                timeout: 20000,
-                maximumAge: 0
-            });
+            } else {
+                btn.innerHTML = '<i class="ph ph-warning"></i> Failed';
+                alert("Could not retrieve a valid location. Please check GPS settings.");
+            }
         };
 
-        getGPSLocation();
+        // Start watching
+        watchId = navigator.geolocation.watchPosition(
+            handlePosition,
+            handleError,
+            { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+        );
+
+        // Stop after burst duration
+        setTimeout(() => {
+            if (watchId) finishGPS();
+        }, BURST_DURATION);
     });
 
     document.getElementById('btn-clear').addEventListener('click', () => {
@@ -108,28 +122,7 @@ function init() {
         ui.feedback.classList.add('hidden');
     });
 
-    document.getElementById('btn-optimize').addEventListener('click', () => {
-        if (state.waypoints.length < 3) {
-            alert("Need at least 3 waypoints to optimize!");
-            return;
-        }
 
-        const result = optimizePath(state.waypoints);
-        updatePath(result.optimizedWaypoints);
-
-        // Show AI Feedback
-        ui.feedback.innerHTML = `
-            <strong>AI Optimization Complete</strong><br>
-            Path re-routed for efficiency.<br>
-            Distance Saved: ${result.savedDistance} km
-        `;
-        ui.feedback.classList.remove('hidden');
-
-        // Update stats based on optimized path
-        const newStats = calculateStats(result.optimizedWaypoints);
-        ui.distance.innerText = `${newStats.distanceKm} km`;
-        ui.time.innerText = `~${newStats.estTimeMin} min`;
-    });
 
     document.getElementById('btn-save').addEventListener('click', async () => {
         if (state.waypoints.length === 0) return;
